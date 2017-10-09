@@ -38,7 +38,7 @@ The goals / steps of this project are the following:
 
 #### 1. Briefly state how you computed the camera matrix and distortion coefficients. Provide an example of a distortion corrected calibration image.
 
-I performed camera calibration in the notebook `./Calibration.ipynb`. In order to perform camera calibration, 20 checkarboard images which taken from different angles are prepared.
+I performed camera calibration in the notebook `./Calibration.ipynb`. In order to perform camera calibration, 20 checkarboard images which taken from different angles are prepared.
 
 The `cv2.calibrateCamera()` function in OpenCV calculates the camera matrix `mtx` and distortion coefficients `dist` from the relation between world coordinate of checkerboard corners and coordinates of checkboard corners in the given image.
 
