@@ -89,6 +89,15 @@ def gray_conv(rgb_img, color_space='gray'):
     elif color_space == 'hsv_v':
         hsv = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2HSV)
         img = hsv[:, :, 2]
+    elif color_space == 'lab_l':
+        lab = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2LAB)
+        img = lab[:, :, 0]
+    elif color_space == 'lab_a':
+        lab = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2LAB)
+        img = lab[:, :, 1]
+    elif color_space == 'lab_b':
+        lab = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2LAB)
+        img = lab[:, :, 2]
     else:
         raise ValueError("{0} is unknown color_space".format(color_space))
     return img
@@ -140,6 +149,159 @@ def color_channel_thresh(img, thresh=(0, 255), color_space='gray'):
     binary = np.zeros_like(gray)
     binary[(gray >= thresh[0]) & (gray <= thresh[1])] = 1
     return binary
+
+
+def gray_thresh(gray, thresh=(0, 255)):
+    binary = np.zeros_like(gray)
+    binary[(gray >= thresh[0]) & (gray <= thresh[1])] = 1
+    return binary
+
+
+def combined_thresh(img):
+    params = [("lab_b", 1.0, 150),
+              #              ("hls_s", 1.0, 230),
+              ("hls_l", 1.0, 220),
+              ("hsv_v", 1.0, 230)]
+    bins = {}
+    res = np.zeros_like(img[:, :, 0])
+    for cs, lim, thresh_low in params:
+        gray = gray_conv(img, cs)
+        gray_clahe = apply_clahe(gray, limit=lim, grid_size=8)
+        binary = gray_thresh(gray_clahe, thresh=(thresh_low, 255))
+        bins[cs] = binary
+        res[(res == 1) | (binary == 1)] = 1
+
+    return res, bins
+
+
+class Line():
+
+    def __init__(self):
+        from collections import deque
+
+        # was the line detected in the last iteration?
+        self.detected = False
+
+        # x values of the last n fits of the line
+        self.recent_xfitted = deque(maxlen=10)
+
+        # average x values of the fitted line over the last n iterations
+        self.bestx = None
+
+        # polynomial coefficients averaged over the last n iterations
+        self.best_fit = None
+
+        # polynomial coefficients for the most recent fit
+        self.current_fit = [np.array([False])]
+
+        # history of polynomial coefficients
+        self.fit_history = deque(maxlen=10000)
+
+        # history of polynomial coefficients
+        self.best_fit_history = deque(maxlen=10000)
+
+        # radius of curvature of the line in some units
+        self.radius_of_curvature = None
+        self.radius_of_curvature_history = deque(maxlen=10000)
+
+        # x position of line
+        self.line_pos = None
+
+        # history of line posotion from left side of image
+        self.line_x_pos_history = deque(maxlen=10000)
+
+        # difference in fit coefficients between last and new fits
+        self.diffs = np.array([0, 0, 0], dtype='float')
+
+        # history of x values for detected line pixels
+        self.detected_x_history = deque(maxlen=10)
+
+        # history of y values for detected line pixels
+        self.detected_y_history = deque(maxlen=10)
+
+    def check_fit(self, fit):
+
+        thresh_hold = 0.001
+
+        if len(self.fit_history) < 5:
+            return True
+
+        diff = abs(fit[0] - self.best_fit[0])
+
+        if diff > thresh_hold:
+            return False
+        else:
+            return True
+
+    def add_detected(self, x, y):
+        self.detected_x_history.appendleft(x)
+        self.detected_y_history.appendleft(y)
+
+    def add_fitted_x(self, x):
+        self.recent_xfitted.appendleft(x)
+
+    def add_fit(self, fit):
+        self.diffs = fit - self.current_fit
+        self.current_fit = fit
+        self.fit_history.appendleft(fit)
+
+    def measure_curvature_and_position(self, y_eval, xm_per_pix=1, ym_per_pix=1):
+        """Measure lane curvature
+        Args:
+        y_eval -- y value at which the curvature is evaluated
+        x -- fitted x value
+        y -- fitted y value
+        xm_per_pix -- meter per pixel of x axis
+        ym_per_pix -- meter per pixel of y axis
+        """
+
+        # Fit new polynomials to x,y in world space
+        fit = self.best_fit
+
+        # X position
+        x_line_position = (fit[0]*y_eval**2 + fit[1]*y_eval*ym_per_pix + fit[2]) * xm_per_pix
+        self.line_pos = x_line_position
+        self.line_x_pos_history.appendleft(x_line_position)
+
+        # Calculate the new radii of curvature
+        curverad = ((1 + (2*fit[0]*y_eval*ym_per_pix + fit[1])**2)**1.5) / np.absolute(2*fit[0])
+
+        self.radius_of_curvature = curverad
+        self.radius_of_curvature_history.appendleft(curverad)
+
+        return curverad
+
+    def update_best_fit(self):
+        """
+        Calculate best fitting result
+
+        Here, weighted mean of recent n fitting result
+        is used as best_fitting
+        """
+        n = 5
+        w_decay = 0.5
+
+        recent_fit = np.array(list(self.fit_history)[:n])
+        n = recent_fit.shape[0]
+        w = np.exp(-w_decay * np.arange(n)).reshape(-1, 1)
+        self.best_fit = (recent_fit * w).sum(axis=0)/w.sum()
+        self.best_fit_history.appendleft(self.best_fit)
+
+    def update_line(self, x, y, fitted_x, fit):
+
+        if not self.check_fit(fit):
+            return False
+
+        self.add_detected(x, y)
+        self.add_fitted_x(fitted_x)
+        self.add_fit(fit)
+
+        self.update_best_fit()
+
+        return True
+
+    def best_fit_line(self, y):
+        return self.best_fit[0]*y**2 + self.best_fit[1]*y + self.best_fit[2]
 
 
 def fit_lane(binary_warped):
@@ -211,14 +373,14 @@ def fit_lane(binary_warped):
     left_lane_inds = np.concatenate(left_lane_inds)
     right_lane_inds = np.concatenate(right_lane_inds)
 
-    if (len(right_lane_inds) == 0) or (len(left_lane_inds) == 0):
-        raise EmptyDataError("Empty data")
-
     # Extract left and right line pixel positions
     leftx = nonzerox[left_lane_inds]
     lefty = nonzeroy[left_lane_inds]
     rightx = nonzerox[right_lane_inds]
     righty = nonzeroy[right_lane_inds]
+
+    if not (leftx.any() and lefty.any() and rightx.any() and righty.any()):
+        raise EmptyDataError("Empty data")
 
     # Fit a second order polynomial to each
     left_fit = np.polyfit(lefty, leftx, 2)
@@ -233,10 +395,7 @@ def fit_lane(binary_warped):
     }
 
 
-def update_fit_lane(binary_warped, fit_result):
-
-    left_fit = fit_result["left_fit"]
-    right_fit = fit_result["right_fit"]
+def update_fit_lane(binary_warped, left_fit, right_fit):
 
     # Assume you now have a new warped binary image
     # from the next frame of video (also called "binary_warped")
@@ -259,7 +418,7 @@ def update_fit_lane(binary_warped, fit_result):
     rightx = nonzerox[right_lane_inds]
     righty = nonzeroy[right_lane_inds]
 
-    if (len(right_lane_inds) == 0) or (len(left_lane_inds) == 0):
+    if not (leftx.any() and lefty.any() and rightx.any() and righty.any()):
         raise EmptyDataError("Empty data")
 
     # Fit a second order polynomial to each
@@ -283,21 +442,12 @@ def update_fit_lane(binary_warped, fit_result):
 
     result = cv2.addWeighted(out_img, 1, window_img, 0.3, 0)
 
-    # create image of fitted curve
-    line_img = np.zeros_like(out_img)
-    line_img = draw_curve(line_img, left_fitx, ploty)
-    line_img = draw_curve(line_img, right_fitx, ploty)
-
-    fit_region_img = np.zeros_like(out_img)
-    fit_region_img = draw_region(fit_region_img, left_fitx, right_fitx, ploty)
-
     return {
         "left_fit": left_fit, "right_fit": right_fit,
+        "left_fitx": left_fitx, "right_fitx": right_fitx,
         "ploty": ploty,
         "out_img": result,
         "window_img": window_img,
-        "line_img": line_img,
-        "fit_region_img": fit_region_img,
         "nonzerox": nonzerox, "nonzeroy": nonzeroy,
         "left_lane_inds": left_lane_inds, "right_lane_inds": right_lane_inds,
         "leftx": leftx, "lefty": lefty, "rightx": rightx, "righty": righty,
@@ -331,27 +481,23 @@ def draw_region(img, left_x, right_x, y, color=(0, 255, 0)):
     return img
 
 
-def measure_curvature(y_eval, fit_result, xm_per_pix=1, ym_per_pix=1):
+def measure_curvature(y_eval, x, y, xm_per_pix=1, ym_per_pix=1):
     """Measure lane curvature
 
     Args:
-
     y_eval -- y value at which the curvature is evaluated
-    fit_result -- dictionary which have fitting result.
+    y -- fitted y
+    x -- fitted x
+    xm_per_pix -- meter per pixel of x axis
+    ym_per_pix -- meter per pixel of y axis
     """
-    lefty = fit_result["lefty"]
-    leftx = fit_result["leftx"]
-    rightx = fit_result["rightx"]
-    righty = fit_result["righty"]
 
     # Fit new polynomials to x,y in world space
-    left_fit_cr = np.polyfit(lefty*ym_per_pix, leftx*xm_per_pix, 2)
-    right_fit_cr = np.polyfit(righty*ym_per_pix, rightx*xm_per_pix, 2)
+    fit_cr = np.polyfit(y*ym_per_pix, x*xm_per_pix, 2)
     # Calculate the new radii of curvature
-    left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*ym_per_pix + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
-    right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*ym_per_pix + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
+    curverad = ((1 + (2*fit_cr[0]*y_eval*ym_per_pix + fit_cr[1])**2)**1.5) / np.absolute(2*fit_cr[0])
 
-    return left_curverad, right_curverad
+    return curverad
 
 
 def weighted_img(img, initial_img, alpha=0.8, beta=1., lambd=0.):
@@ -368,16 +514,7 @@ def weighted_img(img, initial_img, alpha=0.8, beta=1., lambd=0.):
     return cv2.addWeighted(initial_img, alpha, img, beta, lambd)
 
 
-def get_clahe(limit=20, grid_size=4):
+def apply_clahe(img_gray, limit=2, grid_size=4):
     clahe = cv2.createCLAHE(clipLimit=limit, tileGridSize=(grid_size, grid_size))
-    return clahe
-
-
-def apply_clahe(img, clahe):
-    if len(img.shape) == 2:
-        img = clahe.apply(img)
-    else:
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-        img[:, :, 2] = clahe.apply(img[:, :, 2])
-        img = cv2.cvtColor(img, cv2.COLOR_HSV2RGB)
-    return img
+    res = clahe.apply(img_gray)
+    return res
