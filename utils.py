@@ -245,7 +245,7 @@ class Line():
         self.current_fit = fit
         self.fit_history.appendleft(fit)
 
-    def measure_curvature_and_position(self, y_eval, xm_per_pix=1, ym_per_pix=1):
+    def measure_curvature_and_position(self, y_eval, x, y, xm_per_pix=1, ym_per_pix=1):
         """Measure lane curvature
         Args:
         y_eval -- y value at which the curvature is evaluated
@@ -256,10 +256,10 @@ class Line():
         """
 
         # Fit new polynomials to x,y in world space
-        fit = self.best_fit
+        fit = np.polyfit(y*ym_per_pix, x*xm_per_pix, 2)
 
         # X position
-        x_line_position = (fit[0]*y_eval**2 + fit[1]*y_eval*ym_per_pix + fit[2]) * xm_per_pix
+        x_line_position = fit[0]*(y_eval*ym_per_pix)**2 + fit[1]*y_eval*ym_per_pix + fit[2]
         self.line_pos = x_line_position
         self.line_x_pos_history.appendleft(x_line_position)
 
