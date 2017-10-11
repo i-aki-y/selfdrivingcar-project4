@@ -193,3 +193,12 @@ I applied this pipeline to the `challange_video.mp4` and the got the poor result
 
 ![alt text][image11]
 Figure 12: An example of challenge video result. In this case, only the yellow lane is detected and detection of right lane completely failed.
+
+My approach depends on the road color. For example, my model thinks that yellow or white region should be lane.
+Therefore appearance of other objects with white or yellow color such as snow will mislead driving cars.
+I think the introduction of non color features such as lane shape or size will improve robustness of the model.
+
+Differences of daytime or nighttime will also affect the model. One idea to improve the model is to change the parameters dynamically.
+For example, when we are daytime, we select parameters which are tuned for daytime road. And when we are nighttime, we select nighttime model and so on.
+
+Of cause ability of detection not only lane but also other objects will improve the safety of our driving. Furthermore, if we can use other information or knowledge about the environment such as car position data from GPS or map information around the road should improve the performance of the model.
